@@ -1737,7 +1737,8 @@ class MultiHeadAttention(nn.Module):
             v = kv_cache[self.value]
 
         wv, qk = self.qkv_attention(q, k, v, mask)
-        return self.out(wv), qk
+        out = self.out(wv)
+        return out, qk
 
     def qkv_attention(
         self, q: Tensor, k: Tensor, v: Tensor, mask: Optional[Tensor] = None
@@ -1755,7 +1756,6 @@ class MultiHeadAttention(nn.Module):
         )
 
         out = a.permute(0, 2, 1, 3).flatten(start_dim=2)
-        out = Tensor(out.numpy())
         return out, None
 
 class ResidualAttentionBlock(nn.Module):
