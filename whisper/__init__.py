@@ -8,13 +8,8 @@ from typing import List, Optional, Union
 import torch
 from tqdm import tqdm
 
-from .audio import load_audio, log_mel_spectrogram, pad_or_trim
-from .decoding import DecodingOptions, DecodingResult, decode, detect_language
 from .model import ModelDimensions, Whisper
-from .transcribe import transcribe
 from .version import __version__
-
-torch.manual_seed(42)
 
 _MODELS = {
     "tiny.en": "https://openaipublic.azureedge.net/main/whisper/models/d3dd57d32accea0b295c96e26691aa14d8822fac7d9d27d5dc00b4ca2826dd03/tiny.en.pt",
@@ -101,13 +96,13 @@ def available_models() -> List[str]:
     """Returns the names of available models"""
     return list(_MODELS.keys())
 
-
 def load_model(
     name: str,
     device: Optional[Union[str, torch.device]] = None,
     download_root: str = None,
     in_memory: bool = False,
 ) -> Whisper:
+    torch.manual_seed(42)
     """
     Load a Whisper ASR model
 
