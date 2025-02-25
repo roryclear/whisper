@@ -1570,7 +1570,7 @@ def transcribe(
                     )
                 ]
             )
-            print(segment)
+            for seg in current_segments: print(seg["text"])
             all_tokens.extend(
                 [token for segment in current_segments for token in segment["tokens"]]
             )
@@ -1678,11 +1678,41 @@ class Linear(nn.Module):
         ret = x @ self.weight_tiny.T + (self.bias_tiny if self.bias is not None else 0)
         return Tensor(ret.numpy())
 
+class LayerNorm(nn.Module):
+    def __init__(self, normalized_shape, eps=1e-5, elementwise_affine=True):
+        super().__init__()
+        self.normalized_shape = normalized_shape
+        self.eps = eps
+        self.elementwise_affine = elementwise_affine
+
+        # Register parameters properly so PyTorch handles them correctly
+        if elementwise_affine:
+            self.weight = nn.Parameter(torch.ones(normalized_shape))
+            self.bias = nn.Parameter(torch.zeros(normalized_shape))
+        else:
+            self.register_parameter('weight', None)
+            self.register_parameter('bias', None)
+        
+        self.weight_tiny = tiny_Tensor(self.weight.detach().numpy())
+        self.bias_tiny = tiny_Tensor(self.bias.detach().numpy())
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = tiny_Tensor(x.numpy())
+        mean = x.mean(axis=-1, keepdim=True)
+        var = ((x - mean) ** 2).mean(axis=-1, keepdim=True)
+
+        x_norm = (x-mean) / tiny_Tensor.sqrt(var + self.eps)
 
 
-class LayerNorm(nn.LayerNorm):
-    def forward(self, x: Tensor) -> Tensor:
-        return super().forward(x.float()).type(x.dtype)
+        # Apply learnable parameters if enabled
+        if self.elementwise_affine:
+            x_norm = x_norm * self.weight_tiny + self.bias_tiny
+
+        #tiny above
+        x_norm = Tensor(x_norm.numpy())
+        return x_norm
+
+
 
 class MultiHeadAttention(nn.Module):
     use_sdpa = True

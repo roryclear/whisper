@@ -496,7 +496,7 @@ def transcribe(
                     )
                 ]
             )
-            print(segment)
+            for seg in current_segments: print(seg["text"])
             all_tokens.extend(
                 [token for segment in current_segments for token in segment["tokens"]]
             )
