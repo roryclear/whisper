@@ -939,14 +939,6 @@ N_SAMPLES_PER_TOKEN = HOP_LENGTH * 2  # the initial convolutions has stride 2
 FRAMES_PER_SECOND = exact_div(SAMPLE_RATE, HOP_LENGTH)  # 10ms per audio frame
 TOKENS_PER_SECOND = exact_div(SAMPLE_RATE, N_SAMPLES_PER_TOKEN)  # 20ms per audio token
 
-try:
-    from torch.nn.functional import scaled_dot_product_attention
-
-    SDPA_AVAILABLE = True
-except (ImportError, RuntimeError, OSError):
-    scaled_dot_product_attention = None
-    SDPA_AVAILABLE = False
-
 __version__ = "20240930"
 
 def pad_or_trim(array, length: int = N_SAMPLES, *, axis: int = -1):
@@ -1750,29 +1742,21 @@ class MultiHeadAttention(nn.Module):
     def qkv_attention(
         self, q: Tensor, k: Tensor, v: Tensor, mask: Optional[Tensor] = None
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-        n_batch, n_ctx, n_state = q.shape
-        scale = (n_state // self.n_head) ** -0.25
+        q = tiny_Tensor(q.numpy())
+        k = tiny_Tensor(k.numpy())
+        v = tiny_Tensor(v.numpy())
+        _, n_ctx, _ = q.shape
         q = q.view(*q.shape[:2], self.n_head, -1).permute(0, 2, 1, 3)
         k = k.view(*k.shape[:2], self.n_head, -1).permute(0, 2, 1, 3)
         v = v.view(*v.shape[:2], self.n_head, -1).permute(0, 2, 1, 3)
 
-        if SDPA_AVAILABLE and MultiHeadAttention.use_sdpa:
-            a = scaled_dot_product_attention(
-                q, k, v, is_causal=mask is not None and n_ctx > 1
-            )
-            out = a.permute(0, 2, 1, 3).flatten(start_dim=2)
-            qk = None
-        else:
-            qk = (q * scale) @ (k * scale).transpose(-1, -2)
-            if mask is not None:
-                qk = qk + mask[:n_ctx, :n_ctx]
-            qk = qk.float()
+        a = tiny_Tensor.scaled_dot_product_attention(
+            q, k, v, is_causal=mask is not None and n_ctx > 1
+        )
 
-            w = F.softmax(qk, dim=-1).to(q.dtype)
-            out = (w @ v).permute(0, 2, 1, 3).flatten(start_dim=2)
-            qk = qk.detach()
-
-        return out, qk
+        out = a.permute(0, 2, 1, 3).flatten(start_dim=2)
+        out = Tensor(out.numpy())
+        return out, None
 
 class ResidualAttentionBlock(nn.Module):
     def __init__(self, n_state: int, n_head: int, cross_attention: bool = False):
