@@ -1722,7 +1722,6 @@ class MultiHeadAttention(nn.Module):
         mask: Optional[Tensor] = None,
         kv_cache: Optional[dict] = None,
     ):
-        x = tiny_Tensor(x.numpy())
         q = self.query(x,tiny_out=True)
         if kv_cache is None or xa is None or self.key not in kv_cache:
             # hooks, if installed (i.e. kv_cache is not None), will prepend the cached kv tensors;
@@ -1780,11 +1779,12 @@ class ResidualAttentionBlock(nn.Module):
         mask: Optional[Tensor] = None,
         kv_cache: Optional[dict] = None,
     ):
-        if type(x) == Tensor: x = tiny_Tensor(x.numpy())
+        if type(x) == Tensor: 
+            print("ffs")
+            x = tiny_Tensor(x.numpy())
         y = self.attn_ln(x,tiny_out=True)
 
         x = Tensor(x.numpy())
-        y = Tensor(y.numpy())
         x = x + self.attn(y, mask=mask, kv_cache=kv_cache)[0]
         if self.cross_attn:
             y = tiny_Tensor(x.numpy())
@@ -1797,6 +1797,7 @@ class ResidualAttentionBlock(nn.Module):
         y = self.mlp_ln(x,tiny_out=True)
         x = Tensor(x.numpy())
         x = x + self.mlp(y)
+        x = tiny_Tensor(x.numpy())
         return x
 
 
@@ -1833,7 +1834,8 @@ class AudioEncoder(nn.Module):
 
         assert x.shape[1:] == self.positional_embedding.shape, "incorrect audio shape"
         x = (x + self.positional_embedding).to(x.dtype)
-
+        
+        if type(x) == Tensor: x = tiny_Tensor(x.numpy())
         for block in self.blocks:
             x = block(x)
 
@@ -1875,7 +1877,8 @@ class TextDecoder(nn.Module):
             + self.positional_embedding[offset : offset + x.shape[-1]]
         )
         x = x.to(xa.dtype)
-
+        
+        if type(x) == Tensor: x = tiny_Tensor(x.numpy())
         for block in self.blocks:
             x = block(x, xa, mask=self.mask, kv_cache=kv_cache)
 
