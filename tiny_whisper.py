@@ -22,6 +22,7 @@ import torch.nn.functional as F
 from dataclasses import dataclass
 import numpy as np
 import tiktoken
+from tinygrad import Tensor as tiny_Tensor
 
 LANGUAGES = {
     "en": "english",
@@ -1569,6 +1570,7 @@ def transcribe(
                     )
                 ]
             )
+            print(segment)
             all_tokens.extend(
                 [token for segment in current_segments for token in segment["tokens"]]
             )
@@ -1655,13 +1657,28 @@ class Conv1d(nn.Conv1d):
             x, weight.to(x.dtype), None if bias is None else bias.to(x.dtype)
         )
 
-class Linear(nn.Linear):
+class Linear(nn.Module):
+    def __init__(self, in_features: int, out_features: int, bias: bool = True):
+        super().__init__()
+        self.weight = nn.Parameter(torch.empty(out_features, in_features))
+        self.bias = nn.Parameter(torch.empty(out_features)) if bias else None
+        self.reset_parameters()
+        self.weight_tiny = tiny_Tensor(self.weight.detach().numpy())
+        self.bias_tiny = tiny_Tensor(self.bias.detach().numpy()) if self.bias is not None else None
+
+    def reset_parameters(self) -> None:
+        nn.init.kaiming_uniform_(self.weight, a=5**0.5)
+        if self.bias is not None:
+            fan_in, _ = nn.init._calculate_fan_in_and_fan_out(self.weight)
+            bound = 1 / fan_in**0.5 if fan_in > 0 else 0
+            nn.init.uniform_(self.bias, -bound, bound)
+
     def forward(self, x: Tensor) -> Tensor:
-        return F.linear(
-            x,
-            self.weight.to(x.dtype),
-            None if self.bias is None else self.bias.to(x.dtype),
-        )
+        x = tiny_Tensor(x.numpy())
+        ret = x @ self.weight_tiny.T + (self.bias_tiny if self.bias is not None else 0)
+        return Tensor(ret.numpy())
+
+
 
 class LayerNorm(nn.LayerNorm):
     def forward(self, x: Tensor) -> Tensor:
