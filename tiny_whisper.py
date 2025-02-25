@@ -1689,7 +1689,7 @@ class LayerNorm(nn.Module):
         self.weight_tiny = tiny_Tensor(self.weight.detach().numpy())
         self.bias_tiny = tiny_Tensor(self.bias.detach().numpy())
 
-    def forward(self, x: torch.Tensor,tiny_out=False) -> torch.Tensor:
+    def forward(self, x: torch.Tensor,tiny_out=True) -> torch.Tensor: #todo remove tinyout
         if type(x) == Tensor: x = tiny_Tensor(x.numpy())
         mean = x.mean(axis=-1, keepdim=True)
         var = ((x - mean) ** 2).mean(axis=-1, keepdim=True)
@@ -1700,10 +1700,6 @@ class LayerNorm(nn.Module):
         # Apply learnable parameters if enabled
         if self.elementwise_affine:
             x_norm = x_norm * self.weight_tiny + self.bias_tiny
-
-        #tiny above
-        if tiny_out: return x_norm
-        x_norm = Tensor(x_norm.numpy())
         return x_norm
 
 
@@ -1794,6 +1790,8 @@ class ResidualAttentionBlock(nn.Module):
             y = tiny_Tensor(x.numpy())
             y = self.cross_attn_ln(x,tiny_out=True)
             x = x + self.cross_attn(y, xa, kv_cache=kv_cache)[0]
+        y = self.mlp_ln(x,tiny_out=True)
+        y = Tensor(y.numpy())
         x = x + self.mlp(self.mlp_ln(x))
         return x
 
@@ -1835,7 +1833,8 @@ class AudioEncoder(nn.Module):
         for block in self.blocks:
             x = block(x)
 
-        x = self.ln_post(x)
+        x = self.ln_post(x,tiny_out=True)
+        x = Tensor(x.numpy())
         return x
 
 class TextDecoder(nn.Module):
@@ -1875,7 +1874,8 @@ class TextDecoder(nn.Module):
         for block in self.blocks:
             x = block(x, xa, mask=self.mask, kv_cache=kv_cache)
 
-        x = self.ln(x)
+        x = self.ln(x,tiny_out=True)
+        x = Tensor(x.numpy())
         logits = (
             x @ torch.transpose(self.token_embedding.weight.to(x.dtype), 0, 1)
         ).float()
