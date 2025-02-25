@@ -1665,9 +1665,10 @@ class Linear(nn.Module):
             bound = 1 / fan_in**0.5 if fan_in > 0 else 0
             nn.init.uniform_(self.bias, -bound, bound)
 
-    def forward(self, x: Tensor) -> Tensor:
-        x = tiny_Tensor(x.numpy())
+    def forward(self, x: Tensor, tiny_out=False) -> Tensor:
+        if type(x) == Tensor: x = tiny_Tensor(x.numpy())
         ret = x @ self.weight_tiny.T + (self.bias_tiny if self.bias is not None else 0)
+        if tiny_out: return ret
         return Tensor(ret.numpy())
 
 class LayerNorm(nn.Module):
@@ -1688,8 +1689,8 @@ class LayerNorm(nn.Module):
         self.weight_tiny = tiny_Tensor(self.weight.detach().numpy())
         self.bias_tiny = tiny_Tensor(self.bias.detach().numpy())
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = tiny_Tensor(x.numpy())
+    def forward(self, x: torch.Tensor,tiny_out=False) -> torch.Tensor:
+        if type(x) == Tensor: x = tiny_Tensor(x.numpy())
         mean = x.mean(axis=-1, keepdim=True)
         var = ((x - mean) ** 2).mean(axis=-1, keepdim=True)
 
@@ -1701,6 +1702,7 @@ class LayerNorm(nn.Module):
             x_norm = x_norm * self.weight_tiny + self.bias_tiny
 
         #tiny above
+        if tiny_out: return x_norm
         x_norm = Tensor(x_norm.numpy())
         return x_norm
 
@@ -1724,28 +1726,27 @@ class MultiHeadAttention(nn.Module):
         mask: Optional[Tensor] = None,
         kv_cache: Optional[dict] = None,
     ):
-        q = self.query(x)
-
+        x = tiny_Tensor(x.numpy())
+        q = self.query(x,tiny_out=True)
         if kv_cache is None or xa is None or self.key not in kv_cache:
             # hooks, if installed (i.e. kv_cache is not None), will prepend the cached kv tensors;
             # otherwise, perform key/value projections for self- or cross-attention as usual.
+            if type(xa) == Tensor: xa = tiny_Tensor(xa.numpy())
             k = self.key(x if xa is None else xa)
             v = self.value(x if xa is None else xa)
         else:
             # for cross-attention, calculate keys and values once and reuse in subsequent calls.
             k = kv_cache[self.key]
             v = kv_cache[self.value]
-
+        if type(k) == Tensor: k = tiny_Tensor(k.numpy())
+        if type(v) == Tensor: v = tiny_Tensor(v.numpy())
         wv, qk = self.qkv_attention(q, k, v, mask)
-        out = self.out(wv)
+        out = self.out(wv,tiny_out=False)
         return out, qk
 
     def qkv_attention(
-        self, q: Tensor, k: Tensor, v: Tensor, mask: Optional[Tensor] = None
+        self, q, k, v: Tensor, mask: Optional[Tensor] = None
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-        q = tiny_Tensor(q.numpy())
-        k = tiny_Tensor(k.numpy())
-        v = tiny_Tensor(v.numpy())
         _, n_ctx, _ = q.shape
         q = q.view(*q.shape[:2], self.n_head, -1).permute(0, 2, 1, 3)
         k = k.view(*k.shape[:2], self.n_head, -1).permute(0, 2, 1, 3)
@@ -1783,9 +1784,16 @@ class ResidualAttentionBlock(nn.Module):
         mask: Optional[Tensor] = None,
         kv_cache: Optional[dict] = None,
     ):
-        x = x + self.attn(self.attn_ln(x), mask=mask, kv_cache=kv_cache)[0]
+        if type(x) == Tensor: x = tiny_Tensor(x.numpy())
+        y = self.attn_ln(x,tiny_out=True)
+
+        x = Tensor(x.numpy())
+        y = Tensor(y.numpy())
+        x = x + self.attn(y, mask=mask, kv_cache=kv_cache)[0]
         if self.cross_attn:
-            x = x + self.cross_attn(self.cross_attn_ln(x), xa, kv_cache=kv_cache)[0]
+            y = tiny_Tensor(x.numpy())
+            y = self.cross_attn_ln(x,tiny_out=True)
+            x = x + self.cross_attn(y, xa, kv_cache=kv_cache)[0]
         x = x + self.mlp(self.mlp_ln(x))
         return x
 
