@@ -1788,8 +1788,11 @@ class ResidualAttentionBlock(nn.Module):
         x = x + self.attn(y, mask=mask, kv_cache=kv_cache)[0]
         if self.cross_attn:
             y = tiny_Tensor(x.numpy())
+            x = tiny_Tensor(x.numpy())
             y = self.cross_attn_ln(x,tiny_out=True)
+            x = Tensor(x.numpy())
             x = x + self.cross_attn(y, xa, kv_cache=kv_cache)[0]
+        
         y = self.mlp_ln(x,tiny_out=True)
         y = Tensor(y.numpy())
         x = x + self.mlp(self.mlp_ln(x))
@@ -1833,6 +1836,7 @@ class AudioEncoder(nn.Module):
         for block in self.blocks:
             x = block(x)
 
+        x = tiny_Tensor(x.numpy())
         x = self.ln_post(x,tiny_out=True)
         x = Tensor(x.numpy())
         return x
@@ -1874,6 +1878,7 @@ class TextDecoder(nn.Module):
         for block in self.blocks:
             x = block(x, xa, mask=self.mask, kv_cache=kv_cache)
 
+        x = tiny_Tensor(x.numpy())
         x = self.ln(x,tiny_out=True)
         x = Tensor(x.numpy())
         logits = (
