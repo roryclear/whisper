@@ -1690,7 +1690,7 @@ class LayerNorm(nn.Module):
         self.bias_tiny = tiny_Tensor(self.bias.detach().numpy())
 
     def forward(self, x: torch.Tensor,tiny_out=True) -> torch.Tensor: #todo remove tinyout
-        if type(x) == Tensor: x = tiny_Tensor(x.numpy())
+        #if type(x) == Tensor: x = tiny_Tensor(x.numpy())
         mean = x.mean(axis=-1, keepdim=True)
         var = ((x - mean) ** 2).mean(axis=-1, keepdim=True)
 
@@ -1793,9 +1793,10 @@ class ResidualAttentionBlock(nn.Module):
             x = Tensor(x.numpy())
             x = x + self.cross_attn(y, xa, kv_cache=kv_cache)[0]
         
+        x = tiny_Tensor(x.numpy())
         y = self.mlp_ln(x,tiny_out=True)
-        y = Tensor(y.numpy())
-        x = x + self.mlp(self.mlp_ln(x))
+        x = Tensor(x.numpy())
+        x = x + self.mlp(y)
         return x
 
 
