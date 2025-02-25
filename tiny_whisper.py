@@ -1939,8 +1939,6 @@ class Whisper(nn.Module):
     transcribe = transcribe
     decode = decode
 
-torch.manual_seed(42)
-
 _MODELS = {
     "tiny.en": "https://openaipublic.azureedge.net/main/whisper/models/d3dd57d32accea0b295c96e26691aa14d8822fac7d9d27d5dc00b4ca2826dd03/tiny.en.pt",
     "tiny": "https://openaipublic.azureedge.net/main/whisper/models/65147644a518d12f04e32d6f3b26facc3f8dd46e5390956a9424a650c0ce22b9/tiny.pt",
@@ -2033,6 +2031,7 @@ def load_model(
     download_root: str = None,
     in_memory: bool = False,
 ) -> Whisper:
+    torch.manual_seed(42)
     """
     Load a Whisper ASR model
 
