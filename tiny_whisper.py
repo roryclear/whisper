@@ -546,11 +546,14 @@ class GreedyDecoder(TokenDecoder):
 
         logits = tiny_Tensor(logits.numpy())
         logprobs = tiny_Tensor.log_softmax(logits,axis=-1)
-        logprobs = Tensor(logprobs.numpy())
+        logprobs = logprobs.numpy()
         current_logprobs = logprobs[0, next_tokens]
-        sum_logprobs += current_logprobs * (tokens[:, -1] != self.eot)
+        current_logprobs = Tensor([current_logprobs])
+        y = tokens[:, -1].numpy() != self.eot
+        x = tokens[:, -1].numpy() == self.eot
+        sum_logprobs += current_logprobs * (y)
 
-        next_tokens[tokens[:, -1] == self.eot] = self.eot
+        next_tokens[x] = self.eot
         tokens = torch.cat([tokens, next_tokens[:, None]], dim=-1)
 
         completed = (tokens[:, -1] == self.eot).all()
