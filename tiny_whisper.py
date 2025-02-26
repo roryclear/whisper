@@ -23,6 +23,7 @@ from dataclasses import dataclass
 import numpy as np
 import tiktoken
 from tinygrad import Tensor as tiny_Tensor
+from tinygrad import dtypes
 
 LANGUAGES = {
     "en": "english",
@@ -552,7 +553,7 @@ class GreedyDecoder(TokenDecoder):
         y = tokens[:, -1].numpy() != self.eot
         x = tokens[:, -1].numpy() == self.eot
         sum_logprobs += current_logprobs * (y)
-
+        
         next_tokens[x] = self.eot
         tokens = torch.cat([tokens, next_tokens[:, None]], dim=-1)
 
@@ -795,13 +796,6 @@ class DecodingTask:
         else:
             audio_features = self.model.encoder(mel)
 
-        if audio_features.dtype != (
-            torch.float16 if self.options.fp16 else torch.float32
-        ):
-            return TypeError(
-                f"audio_features has an incorrect dtype: {audio_features.dtype}"
-            )
-
         return audio_features
 
     def _detect_language(self, audio_features: Tensor, tokens: Tensor):
@@ -820,7 +814,8 @@ class DecodingTask:
 
     def _main_loop(self, audio_features: Tensor, tokens: Tensor):
         n_batch = tokens.shape[0]
-        sum_logprobs: Tensor = torch.zeros(n_batch, device=audio_features.device)
+        sum_logprobs = tiny_Tensor.zeros(n_batch)
+        sum_logprobs = Tensor(sum_logprobs.numpy())
         no_speech_probs = [np.nan] * n_batch
 
         try:
@@ -857,7 +852,9 @@ class DecodingTask:
         n_audio: int = mel.shape[0]
 
         audio_features: Tensor = self._get_audio_features(mel)  # encoder forward pass
-        tokens: Tensor = torch.tensor([self.initial_tokens]).repeat(n_audio, 1)
+        tokens_tiny = tiny_Tensor(list(self.initial_tokens), dtype=dtypes.int64).expand(n_audio, -1)
+        tokens = Tensor(tokens_tiny.numpy()).to(dtype=torch.int64)  # Ensure int64 dtype
+        
 
         # detect language if requested, overwriting the language token
         languages, language_probs = self._detect_language(audio_features, tokens)
