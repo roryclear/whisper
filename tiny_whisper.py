@@ -1,5 +1,5 @@
 import time
-
+import math
 import hashlib
 import io
 import os
@@ -1668,6 +1668,7 @@ class Linear(nn.Module):
     def forward(self, x: Tensor, tiny_out=False) -> Tensor:
         if type(x) == Tensor: x = tiny_Tensor(x.numpy())
         ret = x @ self.weight_tiny.T + (self.bias_tiny if self.bias is not None else 0)
+        #return ret
         if tiny_out: return ret
         return Tensor(ret.numpy())
 
@@ -1727,7 +1728,7 @@ class MultiHeadAttention(nn.Module):
             # hooks, if installed (i.e. kv_cache is not None), will prepend the cached kv tensors;
             # otherwise, perform key/value projections for self- or cross-attention as usual.
             if type(xa) == Tensor: xa = tiny_Tensor(xa.numpy())
-            k = self.key(x if xa is None else xa)
+            k = self.key(x if xa is None else xa) #todo, why
             v = self.value(x if xa is None else xa)
         else:
             # for cross-attention, calculate keys and values once and reuse in subsequent calls.
@@ -1754,10 +1755,16 @@ class MultiHeadAttention(nn.Module):
         out = a.permute(0, 2, 1, 3).flatten(start_dim=2)
         return out, None
 
+class GELU(nn.Module):
+    def forward(self, x):
+        if type(x) == Tensor:
+            x = tiny_Tensor(x.numpy())
+        return x * 0.5 * (1.0 + tiny_Tensor.tanh(tiny_Tensor.sqrt(tiny_Tensor(2.0 / math.pi)) * (x + 0.044715 * x**3)))
+
+
 class Sequential(nn.Sequential):
     def forward(self, x):
         if type(x) == Tensor:
-            print("FFS")
             x = tiny_Tensor(x.numpy())
         for module in self.children():
             x = module(x)  # Manually apply each module in sequence
@@ -1777,7 +1784,7 @@ class ResidualAttentionBlock(nn.Module):
 
         n_mlp = n_state * 4
         self.mlp = Sequential(
-            Linear(n_state, n_mlp), nn.GELU(), Linear(n_mlp, n_state)
+            Linear(n_state, n_mlp), GELU(), Linear(n_mlp, n_state)
         )
         self.mlp_ln = LayerNorm(n_state)
 
@@ -1803,7 +1810,8 @@ class ResidualAttentionBlock(nn.Module):
         y = self.mlp_ln(x,tiny_out=True)
         x = Tensor(x.numpy())
         x = x + self.mlp(y)
-        x = tiny_Tensor(x.numpy())
+        if type(x) == Tensor:
+            x = tiny_Tensor(x.numpy())
         return x
 
 
