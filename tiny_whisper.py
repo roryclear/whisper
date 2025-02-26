@@ -1754,6 +1754,15 @@ class MultiHeadAttention(nn.Module):
         out = a.permute(0, 2, 1, 3).flatten(start_dim=2)
         return out, None
 
+class Sequential(nn.Sequential):
+    def forward(self, x):
+        if type(x) == Tensor:
+            print("FFS")
+            x = tiny_Tensor(x.numpy())
+        for module in self.children():
+            x = module(x)  # Manually apply each module in sequence
+        return x
+
 class ResidualAttentionBlock(nn.Module):
     def __init__(self, n_state: int, n_head: int, cross_attention: bool = False):
         super().__init__()
@@ -1767,7 +1776,7 @@ class ResidualAttentionBlock(nn.Module):
         self.cross_attn_ln = LayerNorm(n_state) if cross_attention else None
 
         n_mlp = n_state * 4
-        self.mlp = nn.Sequential(
+        self.mlp = Sequential(
             Linear(n_state, n_mlp), nn.GELU(), Linear(n_mlp, n_state)
         )
         self.mlp_ln = LayerNorm(n_state)
@@ -1779,9 +1788,6 @@ class ResidualAttentionBlock(nn.Module):
         mask: Optional[Tensor] = None,
         kv_cache: Optional[dict] = None,
     ):
-        if type(x) == Tensor: 
-            print("ffs")
-            x = tiny_Tensor(x.numpy())
         y = self.attn_ln(x,tiny_out=True)
 
         x = Tensor(x.numpy())
@@ -1855,7 +1861,6 @@ class Embedding(nn.Module):
         nn.init.normal_(self.weight, mean=0, std=0.02)  # Same as PyTorch's default init
 
     def forward(self, x: Tensor,tiny_out=False) -> Tensor:
-        if type(x) == Tensor: x = tiny_Tensor(x.numpy())
         return self.weight_tiny[x]
 
 class TextDecoder(nn.Module):
@@ -1885,6 +1890,8 @@ class TextDecoder(nn.Module):
         xa : torch.Tensor, shape = (batch_size, n_audio_ctx, n_audio_state)
             the encoded audio features to be attended on
         """
+        if type(x) == Tensor:
+            x = tiny_Tensor(x.numpy())
         offset = next(iter(kv_cache.values())).shape[1] if kv_cache else 0
         y = self.token_embedding(x)
         y = Tensor(y.numpy())
@@ -1942,11 +1949,13 @@ class Whisper(nn.Module):
         return self.encoder(mel)
 
     def logits(self, tokens: torch.Tensor, audio_features: torch.Tensor):
+        tokens = tiny_Tensor(tokens.numpy())
         return self.decoder(tokens, audio_features)
 
     def forward(
         self, mel: torch.Tensor, tokens: torch.Tensor
     ) -> Dict[str, torch.Tensor]:
+        tokens = tiny_Tensor(tokens.numpy())
         return self.decoder(tokens, self.encoder(mel))
 
     @property
@@ -1990,7 +1999,6 @@ class Whisper(nn.Module):
             if isinstance(layer, MultiHeadAttention):
                 hooks.append(layer.key.register_forward_hook(save_to_cache))
                 hooks.append(layer.value.register_forward_hook(save_to_cache))
-
         self.decoder.apply(install_hooks)
         return cache, hooks
     
