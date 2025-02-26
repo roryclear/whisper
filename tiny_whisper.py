@@ -1856,10 +1856,7 @@ class Embedding(nn.Module):
 
     def forward(self, x: Tensor,tiny_out=False) -> Tensor:
         if type(x) == Tensor: x = tiny_Tensor(x.numpy())
-        ret = self.weight_tiny[x]
-        if tiny_out: return ret
-        return Tensor(ret.numpy())
-
+        return self.weight_tiny[x]
 
 class TextDecoder(nn.Module):
     def __init__(
@@ -1889,7 +1886,9 @@ class TextDecoder(nn.Module):
             the encoded audio features to be attended on
         """
         offset = next(iter(kv_cache.values())).shape[1] if kv_cache else 0
-        x = self.token_embedding(x) + self.positional_embedding[offset : offset + x.shape[-1]]
+        y = self.token_embedding(x)
+        y = Tensor(y.numpy())
+        x = y + self.positional_embedding[offset : offset + x.shape[-1]]
         x = x.to(xa.dtype)
         
         if type(x) == Tensor: x = tiny_Tensor(x.numpy())
