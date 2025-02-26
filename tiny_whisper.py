@@ -1670,7 +1670,8 @@ class Linear(nn.Module):
         ret = x @ self.weight_tiny.T + (self.bias_tiny if self.bias is not None else 0)
         #return ret
         if tiny_out: return ret
-        return Tensor(ret.numpy())
+        ret = Tensor(ret.numpy())
+        return ret
 
 class LayerNorm(nn.Module):
     def __init__(self, normalized_shape, eps=1e-5, elementwise_affine=True):
@@ -1706,8 +1707,6 @@ class LayerNorm(nn.Module):
 
 
 class MultiHeadAttention(nn.Module):
-    use_sdpa = True
-
     def __init__(self, n_state: int, n_head: int):
         super().__init__()
         self.n_head = n_head
@@ -1728,13 +1727,19 @@ class MultiHeadAttention(nn.Module):
             # hooks, if installed (i.e. kv_cache is not None), will prepend the cached kv tensors;
             # otherwise, perform key/value projections for self- or cross-attention as usual.
             if type(xa) == Tensor: xa = tiny_Tensor(xa.numpy())
-            k = self.key(x if xa is None else xa) #todo, why
-            v = self.value(x if xa is None else xa)
+            if xa is not None:
+                k = self.key(xa,tiny_out=True)
+                v = self.value(xa,tiny_out=True)
+            else:
+                k = self.key(x,tiny_out=False)
+                v = self.value(x,tiny_out=False)
+                if type(k) == Tensor: k = tiny_Tensor(k.numpy())
+                if type(v) == Tensor: v = tiny_Tensor(v.numpy())
         else:
             # for cross-attention, calculate keys and values once and reuse in subsequent calls.
             k = kv_cache[self.key]
             v = kv_cache[self.value]
-        if type(k) == Tensor: k = tiny_Tensor(k.numpy())
+            #print(type(k),type(v))
         if type(v) == Tensor: v = tiny_Tensor(v.numpy())
         wv, qk = self.qkv_attention(q, k, v, mask)
         out = self.out(wv,tiny_out=False)
