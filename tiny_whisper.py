@@ -1,5 +1,5 @@
 import time
-import math
+
 import hashlib
 import io
 import os
@@ -23,7 +23,6 @@ from dataclasses import dataclass
 import numpy as np
 import tiktoken
 from tinygrad import Tensor as tiny_Tensor
-from tinygrad import dtypes
 
 LANGUAGES = {
     "en": "english",
@@ -545,16 +544,11 @@ class GreedyDecoder(TokenDecoder):
         else:
             next_tokens = Categorical(logits=logits / self.temperature).sample()
 
-        logits = tiny_Tensor(logits.numpy())
-        logprobs = tiny_Tensor.log_softmax(logits,axis=-1)
-        logprobs = logprobs.numpy()
-        current_logprobs = logprobs[0, next_tokens]
-        current_logprobs = Tensor([current_logprobs])
-        y = tokens[:, -1].numpy() != self.eot
-        x = tokens[:, -1].numpy() == self.eot
-        sum_logprobs += current_logprobs * (y)
-        
-        next_tokens[x] = self.eot
+        logprobs = F.log_softmax(logits.float(), dim=-1)
+        current_logprobs = logprobs[torch.arange(logprobs.shape[0]), next_tokens]
+        sum_logprobs += current_logprobs * (tokens[:, -1] != self.eot)
+
+        next_tokens[tokens[:, -1] == self.eot] = self.eot
         tokens = torch.cat([tokens, next_tokens[:, None]], dim=-1)
 
         completed = (tokens[:, -1] == self.eot).all()
@@ -796,6 +790,13 @@ class DecodingTask:
         else:
             audio_features = self.model.encoder(mel)
 
+        if audio_features.dtype != (
+            torch.float16 if self.options.fp16 else torch.float32
+        ):
+            return TypeError(
+                f"audio_features has an incorrect dtype: {audio_features.dtype}"
+            )
+
         return audio_features
 
     def _detect_language(self, audio_features: Tensor, tokens: Tensor):
@@ -814,8 +815,7 @@ class DecodingTask:
 
     def _main_loop(self, audio_features: Tensor, tokens: Tensor):
         n_batch = tokens.shape[0]
-        sum_logprobs = tiny_Tensor.zeros(n_batch)
-        sum_logprobs = Tensor(sum_logprobs.numpy())
+        sum_logprobs: Tensor = torch.zeros(n_batch, device=audio_features.device)
         no_speech_probs = [np.nan] * n_batch
 
         try:
@@ -852,9 +852,7 @@ class DecodingTask:
         n_audio: int = mel.shape[0]
 
         audio_features: Tensor = self._get_audio_features(mel)  # encoder forward pass
-        tokens_tiny = tiny_Tensor(list(self.initial_tokens), dtype=dtypes.int64).expand(n_audio, -1)
-        tokens = Tensor(tokens_tiny.numpy()).to(dtype=torch.int64)  # Ensure int64 dtype
-        
+        tokens: Tensor = torch.tensor([self.initial_tokens]).repeat(n_audio, 1)
 
         # detect language if requested, overwriting the language token
         languages, language_probs = self._detect_language(audio_features, tokens)
@@ -1306,7 +1304,15 @@ def transcribe(
     remaining_prompt_length = model.dims.n_text_ctx // 2 - 1
     if initial_prompt is not None:
         initial_prompt_tokens = tokenizer.encode(" " + initial_prompt.strip())
-        all_tokens.extend(initial_prompt_tokens)
+        with open('torch_output.txt', 'r') as file:
+                file_content = file.read()
+        for seg in all_segments:
+            print(seg["text"])
+            assert(seg["text"] in file_content) #todo slow
+        all_tokens.extend(
+            [token for segment in current_segments for token in segment["tokens"]]
+        )
+
         remaining_prompt_length -= len(initial_prompt_tokens)
     else:
         initial_prompt_tokens = []
@@ -1564,7 +1570,7 @@ def transcribe(
                     )
                 ]
             )
-            for seg in all_segments: print(seg["text"])
+            for seg in current_segments: print(seg["text"])
             all_tokens.extend(
                 [token for segment in current_segments for token in segment["tokens"]]
             )
@@ -1670,10 +1676,8 @@ class Linear(nn.Module):
     def forward(self, x: Tensor, tiny_out=False) -> Tensor:
         if type(x) == Tensor: x = tiny_Tensor(x.numpy())
         ret = x @ self.weight_tiny.T + (self.bias_tiny if self.bias is not None else 0)
-        #return ret
         if tiny_out: return ret
-        ret = Tensor(ret.numpy())
-        return ret
+        return Tensor(ret.numpy())
 
 class LayerNorm(nn.Module):
     def __init__(self, normalized_shape, eps=1e-5, elementwise_affine=True):
@@ -1709,6 +1713,8 @@ class LayerNorm(nn.Module):
 
 
 class MultiHeadAttention(nn.Module):
+    use_sdpa = True
+
     def __init__(self, n_state: int, n_head: int):
         super().__init__()
         self.n_head = n_head
@@ -1729,19 +1735,13 @@ class MultiHeadAttention(nn.Module):
             # hooks, if installed (i.e. kv_cache is not None), will prepend the cached kv tensors;
             # otherwise, perform key/value projections for self- or cross-attention as usual.
             if type(xa) == Tensor: xa = tiny_Tensor(xa.numpy())
-            if xa is not None:
-                k = self.key(xa,tiny_out=True)
-                v = self.value(xa,tiny_out=True)
-            else:
-                k = self.key(x,tiny_out=False)
-                v = self.value(x,tiny_out=False)
-                if type(k) == Tensor: k = tiny_Tensor(k.numpy())
-                if type(v) == Tensor: v = tiny_Tensor(v.numpy())
+            k = self.key(x if xa is None else xa)
+            v = self.value(x if xa is None else xa)
         else:
             # for cross-attention, calculate keys and values once and reuse in subsequent calls.
             k = kv_cache[self.key]
             v = kv_cache[self.value]
-            #print(type(k),type(v))
+        if type(k) == Tensor: k = tiny_Tensor(k.numpy())
         if type(v) == Tensor: v = tiny_Tensor(v.numpy())
         wv, qk = self.qkv_attention(q, k, v, mask)
         out = self.out(wv,tiny_out=False)
@@ -1762,21 +1762,6 @@ class MultiHeadAttention(nn.Module):
         out = a.permute(0, 2, 1, 3).flatten(start_dim=2)
         return out, None
 
-class GELU(nn.Module):
-    def forward(self, x):
-        if type(x) == Tensor:
-            x = tiny_Tensor(x.numpy())
-        return x * 0.5 * (1.0 + tiny_Tensor.tanh(tiny_Tensor.sqrt(tiny_Tensor(2.0 / math.pi)) * (x + 0.044715 * x**3)))
-
-
-class Sequential(nn.Sequential):
-    def forward(self, x):
-        if type(x) == Tensor:
-            x = tiny_Tensor(x.numpy())
-        for module in self.children():
-            x = module(x)  # Manually apply each module in sequence
-        return x
-
 class ResidualAttentionBlock(nn.Module):
     def __init__(self, n_state: int, n_head: int, cross_attention: bool = False):
         super().__init__()
@@ -1790,8 +1775,8 @@ class ResidualAttentionBlock(nn.Module):
         self.cross_attn_ln = LayerNorm(n_state) if cross_attention else None
 
         n_mlp = n_state * 4
-        self.mlp = Sequential(
-            Linear(n_state, n_mlp), GELU(), Linear(n_mlp, n_state)
+        self.mlp = nn.Sequential(
+            Linear(n_state, n_mlp), nn.GELU(), Linear(n_mlp, n_state)
         )
         self.mlp_ln = LayerNorm(n_state)
 
@@ -1802,6 +1787,9 @@ class ResidualAttentionBlock(nn.Module):
         mask: Optional[Tensor] = None,
         kv_cache: Optional[dict] = None,
     ):
+        if type(x) == Tensor: 
+            print("ffs")
+            x = tiny_Tensor(x.numpy())
         y = self.attn_ln(x,tiny_out=True)
 
         x = Tensor(x.numpy())
@@ -1817,8 +1805,7 @@ class ResidualAttentionBlock(nn.Module):
         y = self.mlp_ln(x,tiny_out=True)
         x = Tensor(x.numpy())
         x = x + self.mlp(y)
-        if type(x) == Tensor:
-            x = tiny_Tensor(x.numpy())
+        x = tiny_Tensor(x.numpy())
         return x
 
 
@@ -1876,6 +1863,7 @@ class Embedding(nn.Module):
         nn.init.normal_(self.weight, mean=0, std=0.02)  # Same as PyTorch's default init
 
     def forward(self, x: Tensor,tiny_out=False) -> Tensor:
+        if type(x) == Tensor: x = tiny_Tensor(x.numpy())
         return self.weight_tiny[x]
 
 class TextDecoder(nn.Module):
@@ -1905,8 +1893,6 @@ class TextDecoder(nn.Module):
         xa : torch.Tensor, shape = (batch_size, n_audio_ctx, n_audio_state)
             the encoded audio features to be attended on
         """
-        if type(x) == Tensor:
-            x = tiny_Tensor(x.numpy())
         offset = next(iter(kv_cache.values())).shape[1] if kv_cache else 0
         y = self.token_embedding(x)
         y = Tensor(y.numpy())
@@ -1964,13 +1950,11 @@ class Whisper(nn.Module):
         return self.encoder(mel)
 
     def logits(self, tokens: torch.Tensor, audio_features: torch.Tensor):
-        tokens = tiny_Tensor(tokens.numpy())
         return self.decoder(tokens, audio_features)
 
     def forward(
         self, mel: torch.Tensor, tokens: torch.Tensor
     ) -> Dict[str, torch.Tensor]:
-        tokens = tiny_Tensor(tokens.numpy())
         return self.decoder(tokens, self.encoder(mel))
 
     @property
@@ -2014,6 +1998,7 @@ class Whisper(nn.Module):
             if isinstance(layer, MultiHeadAttention):
                 hooks.append(layer.key.register_forward_hook(save_to_cache))
                 hooks.append(layer.value.register_forward_hook(save_to_cache))
+
         self.decoder.apply(install_hooks)
         return cache, hooks
     
