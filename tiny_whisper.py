@@ -1843,13 +1843,31 @@ class AudioEncoder(nn.Module):
         x = Tensor(x.numpy())
         return x
 
+
+class Embedding(nn.Module):
+    def __init__(self, num_embeddings: int, embedding_dim: int):
+        super().__init__()
+        self.weight = nn.Parameter(torch.empty(num_embeddings, embedding_dim))
+        self.reset_parameters()
+        self.weight_tiny = tiny_Tensor(self.weight.detach().numpy())
+
+    def reset_parameters(self):
+        nn.init.normal_(self.weight, mean=0, std=0.02)  # Same as PyTorch's default init
+
+    def forward(self, x: Tensor,tiny_out=False) -> Tensor:
+        if type(x) == Tensor: x = tiny_Tensor(x.numpy())
+        ret = self.weight_tiny[x]
+        if tiny_out: return ret
+        return Tensor(ret.numpy())
+
+
 class TextDecoder(nn.Module):
     def __init__(
         self, n_vocab: int, n_ctx: int, n_state: int, n_head: int, n_layer: int
     ):
         super().__init__()
 
-        self.token_embedding = nn.Embedding(n_vocab, n_state)
+        self.token_embedding = Embedding(n_vocab, n_state)
         self.positional_embedding = nn.Parameter(torch.empty(n_ctx, n_state))
 
         self.blocks: Iterable[ResidualAttentionBlock] = nn.ModuleList(
@@ -1871,10 +1889,7 @@ class TextDecoder(nn.Module):
             the encoded audio features to be attended on
         """
         offset = next(iter(kv_cache.values())).shape[1] if kv_cache else 0
-        x = (
-            self.token_embedding(x)
-            + self.positional_embedding[offset : offset + x.shape[-1]]
-        )
+        x = self.token_embedding(x) + self.positional_embedding[offset : offset + x.shape[-1]]
         x = x.to(xa.dtype)
         
         if type(x) == Tensor: x = tiny_Tensor(x.numpy())
