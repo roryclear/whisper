@@ -1306,9 +1306,6 @@ def transcribe(
         initial_prompt_tokens = tokenizer.encode(" " + initial_prompt.strip())
         with open('torch_output.txt', 'r') as file:
                 file_content = file.read()
-        for seg in all_segments:
-            print(seg["text"])
-            assert(seg["text"] in file_content) #todo slow
         all_tokens.extend(
             [token for segment in current_segments for token in segment["tokens"]]
         )
@@ -1570,7 +1567,11 @@ def transcribe(
                     )
                 ]
             )
-            for seg in current_segments: print(seg["text"])
+            with open('torch_output.txt', 'r') as file:
+                file_content = file.read()
+            for seg in current_segments: 
+                print(seg["text"])
+                assert(seg["text"] in file_content) #todo slow
             all_tokens.extend(
                 [token for segment in current_segments for token in segment["tokens"]]
             )
@@ -2249,6 +2250,7 @@ with open('torch_output.txt', 'r') as file:
     file_content = file.read()
 assert(result["text"] == file_content)
 
+'''
 st = time.perf_counter()
 model = load_model("small")
 result = model.transcribe("TINYCORP_MEETING_2025-01-27.mp3")
@@ -2257,3 +2259,4 @@ print("\ntime taken: {:.2f}".format(time.perf_counter() - st))
 with open('torch_output_small.txt', 'r') as file:
     file_content = file.read()
 assert(result["text"] == file_content)
+'''
