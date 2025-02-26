@@ -1839,7 +1839,6 @@ class AudioEncoder(nn.Module):
         for block in self.blocks:
             x = block(x)
 
-        x = tiny_Tensor(x.numpy())
         x = self.ln_post(x,tiny_out=True)
         x = Tensor(x.numpy())
         return x
@@ -1881,12 +1880,10 @@ class TextDecoder(nn.Module):
         if type(x) == Tensor: x = tiny_Tensor(x.numpy())
         for block in self.blocks:
             x = block(x, xa, mask=self.mask, kv_cache=kv_cache)
-
-        x = tiny_Tensor(x.numpy())
         x = self.ln(x,tiny_out=True)
         x = Tensor(x.numpy())
         logits = (
-            x @ torch.transpose(self.token_embedding.weight.to(x.dtype), 0, 1)
+            x @ Tensor.transpose(self.token_embedding.weight.to(x.dtype), 0, 1)
         ).float()
 
         return logits
