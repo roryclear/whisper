@@ -544,8 +544,10 @@ class GreedyDecoder(TokenDecoder):
         else:
             next_tokens = Categorical(logits=logits / self.temperature).sample()
 
-        logprobs = F.log_softmax(logits.float(), dim=-1)
-        current_logprobs = logprobs[torch.arange(logprobs.shape[0]), next_tokens]
+        logits = tiny_Tensor(logits.numpy())
+        logprobs = tiny_Tensor.log_softmax(logits,axis=-1)
+        logprobs = Tensor(logprobs.numpy())
+        current_logprobs = logprobs[0, next_tokens]
         sum_logprobs += current_logprobs * (tokens[:, -1] != self.eot)
 
         next_tokens[tokens[:, -1] == self.eot] = self.eot
