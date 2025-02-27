@@ -954,7 +954,7 @@ def index_select(input_tensor, dim, index):
     expanded_index[dim] = index
     input_tensor = input_tensor.numpy()
     ret = input_tensor[tuple(expanded_index)] #todo, np
-    return Tensor(ret)
+    return ret
 
 def pad_or_trim(array, length: int = N_SAMPLES, *, axis: int = -1):
     """
@@ -965,13 +965,15 @@ def pad_or_trim(array, length: int = N_SAMPLES, *, axis: int = -1):
         y = Tensor(y.numpy()).to(dtype=torch.int32)
         array = tiny_Tensor(array.numpy())
         array = index_select(array, dim=axis, index=y)
+        array = Tensor(array) #np
 
     if array.shape[axis] < length:
-        pad_widths = [(0, 0)] * array.ndim
+        array = tiny_Tensor(array.numpy())
+        pad_widths = [(0, 0)] * len(array.shape)
         pad_widths[axis] = (0, length - array.shape[axis])
+        array = Tensor(array.numpy())
         array = F.pad(array, [pad for sizes in pad_widths[::-1] for pad in sizes])
     return array
-
 
 @lru_cache(maxsize=None)
 def get_encoding(name: str = "gpt2", num_languages: int = 99):
