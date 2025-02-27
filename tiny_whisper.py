@@ -23,6 +23,7 @@ from dataclasses import dataclass
 import numpy as np
 import tiktoken
 from tinygrad import Tensor as tiny_Tensor
+from tinygrad import dtypes
 
 LANGUAGES = {
     "en": "english",
@@ -545,10 +546,14 @@ class GreedyDecoder(TokenDecoder):
             next_tokens = Categorical(logits=logits / self.temperature).sample()
 
         logprobs = F.log_softmax(logits.float(), dim=-1)
-        current_logprobs = logprobs[torch.arange(logprobs.shape[0]), next_tokens]
-        sum_logprobs += current_logprobs * (tokens[:, -1] != self.eot)
+        logprobs = logprobs.numpy()
+        current_logprobs = logprobs[0, next_tokens]
+        current_logprobs = Tensor([current_logprobs])
+        y = tokens[:, -1].numpy() != self.eot
+        x = tokens[:, -1].numpy() == self.eot
+        sum_logprobs += current_logprobs * (y)
 
-        next_tokens[tokens[:, -1] == self.eot] = self.eot
+        next_tokens[x] = self.eot
         tokens = torch.cat([tokens, next_tokens[:, None]], dim=-1)
 
         completed = (tokens[:, -1] == self.eot).all()
@@ -815,7 +820,8 @@ class DecodingTask:
 
     def _main_loop(self, audio_features: Tensor, tokens: Tensor):
         n_batch = tokens.shape[0]
-        sum_logprobs: Tensor = torch.zeros(n_batch, device=audio_features.device)
+        sum_logprobs = tiny_Tensor.zeros(n_batch)
+        sum_logprobs = Tensor(sum_logprobs.numpy())
         no_speech_probs = [np.nan] * n_batch
 
         try:
@@ -852,7 +858,8 @@ class DecodingTask:
         n_audio: int = mel.shape[0]
 
         audio_features: Tensor = self._get_audio_features(mel)  # encoder forward pass
-        tokens: Tensor = torch.tensor([self.initial_tokens]).repeat(n_audio, 1)
+        tokens_tiny = tiny_Tensor(list(self.initial_tokens), dtype=dtypes.int64).expand(n_audio, -1)
+        tokens = Tensor(tokens_tiny.numpy()).to(dtype=torch.int64)  # Ensure int64 dtype
 
         # detect language if requested, overwriting the language token
         languages, language_probs = self._detect_language(audio_features, tokens)
