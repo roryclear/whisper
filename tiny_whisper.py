@@ -1825,10 +1825,17 @@ class ResidualAttentionBlock(nn.Module):
 def sinusoids(length, channels, max_timescale=10000):
     """Returns sinusoids for positional embedding"""
     assert channels % 2 == 0
-    log_timescale_increment = np.log(max_timescale) / (channels // 2 - 1)
-    inv_timescales = torch.exp(-log_timescale_increment * torch.arange(channels // 2))
-    scaled_time = torch.arange(length)[:, np.newaxis] * inv_timescales[np.newaxis, :]
-    return torch.cat([torch.sin(scaled_time), torch.cos(scaled_time)], dim=1)
+    log_timescale_increment = tiny_Tensor.log(tiny_Tensor(max_timescale)) / (channels // 2 - 1)
+    log_timescale_increment = log_timescale_increment * -tiny_Tensor.arange(channels // 2)
+    log_timescale_increment = tiny_Tensor.exp(log_timescale_increment)
+    inv_timescales = tiny_Tensor.exp(log_timescale_increment)
+    inv_timescales = inv_timescales.numpy()
+    scaled_time = np.arange(length)[:, np.newaxis] * inv_timescales[np.newaxis, :]
+    scaled_time = tiny_Tensor(scaled_time,dtype=dtypes.float32)
+    s = tiny_Tensor.sin(scaled_time)
+    c = tiny_Tensor.cos(scaled_time)
+    ret = tiny_Tensor.cat(s,c,dim=1)
+    return Tensor(ret.numpy())
 
 class AudioEncoder(nn.Module):
     def __init__(
