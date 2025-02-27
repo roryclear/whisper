@@ -962,7 +962,7 @@ def pad_or_trim(array, length: int = N_SAMPLES, *, axis: int = -1):
     """
     if array.shape[axis] > length:
         y = tiny_Tensor.arange(length,dtype=dtypes.int32)
-        y = Tensor(y.numpy()).to(dtype=torch.int32)
+        y = y.numpy()
         array = tiny_Tensor(array.numpy())
         array = index_select(array, dim=axis, index=y)
 
@@ -975,6 +975,7 @@ def pad_or_trim(array, length: int = N_SAMPLES, *, axis: int = -1):
     if type(array) == tiny_Tensor: array = array.numpy()
     array = Tensor(array)
     return array
+
 
 
 @lru_cache(maxsize=None)
