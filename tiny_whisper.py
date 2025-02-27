@@ -965,15 +965,17 @@ def pad_or_trim(array, length: int = N_SAMPLES, *, axis: int = -1):
         y = Tensor(y.numpy()).to(dtype=torch.int32)
         array = tiny_Tensor(array.numpy())
         array = index_select(array, dim=axis, index=y)
-        array = Tensor(array) #np
 
     if array.shape[axis] < length:
         array = tiny_Tensor(array.numpy())
         pad_widths = [(0, 0)] * len(array.shape)
         pad_widths[axis] = (0, length - array.shape[axis])
-        array = Tensor(array.numpy())
-        array = F.pad(array, [pad for sizes in pad_widths[::-1] for pad in sizes])
+        array = tiny_Tensor.pad(array, [pad for sizes in pad_widths[::-1] for pad in sizes])
+        
+    if type(array) == tiny_Tensor: array = array.numpy()
+    array = Tensor(array)
     return array
+
 
 @lru_cache(maxsize=None)
 def get_encoding(name: str = "gpt2", num_languages: int = 99):
