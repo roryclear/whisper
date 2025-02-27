@@ -541,27 +541,34 @@ class GreedyDecoder(TokenDecoder):
         self, tokens: Tensor, logits: Tensor, sum_logprobs: Tensor
     ) -> Tuple[Tensor, bool]:
         if self.temperature == 0:
-            next_tokens = logits.argmax(dim=-1)
+            logits = tiny_Tensor(logits.numpy())
+            next_tokens = logits.argmax(axis=-1)
+            next_tokens = Tensor(next_tokens.numpy())
+            next_tokens = next_tokens.to(torch.int)
         else:
-            next_tokens = Categorical(logits=logits / self.temperature).sample()
+            next_tokens = Categorical(logits=logits / self.temperature).sample() #todo!
+        
+        if type(logits) == Tensor: logits = tiny_Tensor(logits.numpy())
+        logprobs = tiny_Tensor.log_softmax(logits,axis=-1)
+        x = next_tokens.numpy()[0]
+        current_logprobs = logprobs.numpy()[0, x]
 
-        logprobs = F.log_softmax(logits.float(), dim=-1)
-        logprobs = logprobs.numpy()
-        current_logprobs = logprobs[0, next_tokens]
-        current_logprobs = Tensor([current_logprobs])
-        y = tokens[:, -1].numpy() != self.eot
-        x = tokens[:, -1].numpy() == self.eot
-        sum_logprobs += current_logprobs * (y)
-
-        next_tokens[x] = self.eot
-        tokens = torch.cat([tokens, next_tokens[:, None]], dim=-1)
-
-        completed = (tokens[:, -1] == self.eot).all()
+        if tokens[:, -1] != self.eot: sum_logprobs += current_logprobs
+        tokens = tiny_Tensor(tokens.numpy())
+        next_tokens = tiny_Tensor(next_tokens.numpy())
+        next_tokens = next_tokens.reshape(1,1)
+        tokens = tiny_Tensor.cat(tokens,next_tokens,dim=-1)
+        tokens = tokens.numpy()
+        completed = False
+        completed = (tokens[:, -1] == self.eot)
+        tokens = Tensor(tokens).to(torch.int)
         return tokens, completed
 
     def finalize(self, tokens: Tensor, sum_logprobs: Tensor):
         # make sure each sequence has at least one EOT token at the end
-        tokens = F.pad(tokens, (0, 1), value=self.eot)
+        tokens = tiny_Tensor(tokens.numpy())
+        tokens = tokens.pad([0,1],value=self.eot)
+        tokens = Tensor(tokens.numpy()).to(torch.int)
         return tokens, sum_logprobs.tolist()
 
 class SuppressBlank(LogitFilter):
