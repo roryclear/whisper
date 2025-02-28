@@ -15,6 +15,7 @@ from functools import lru_cache
 import tqdm
 import zlib
 from torch.distributions import Categorical
+import math
 
 import torch
 from torch import Tensor, nn
@@ -136,10 +137,6 @@ class SequenceRanker:
     def rank(
         self, tokens: List[List[Tensor]], sum_logprobs: List[List[float]]
     ) -> List[int]:
-        """
-        Given a list of groups of samples and their cumulative log probabilities,
-        return the indices of the samples in each group to select as the final result
-        """
         raise NotImplementedError
 
 class Inference:
@@ -156,11 +153,6 @@ class Inference:
         pass
 
 class MaximumLikelihoodRanker(SequenceRanker):
-    """
-    Select the sample with the highest log probabilities, penalized using either
-    a simple length normalization or Google NMT paper's length penalty
-    """
-
     def __init__(self, length_penalty: Optional[float]):
         self.length_penalty = length_penalty
 
@@ -188,73 +180,19 @@ class TokenDecoder:
     def update(
         self, tokens: Tensor, logits: Tensor, sum_logprobs: Tensor
     ) -> Tuple[Tensor, bool]:
-        """Specify how to select the next token, based on the current trace and logits
-
-        Parameters
-        ----------
-        tokens : Tensor, shape = (n_batch, current_sequence_length)
-            all tokens in the context so far, including the prefix and sot_sequence tokens
-
-        logits : Tensor, shape = (n_batch, vocab_size)
-            per-token logits of the probability distribution at the current step
-
-        sum_logprobs : Tensor, shape = (n_batch)
-            cumulative log probabilities for each sequence
-
-        Returns
-        -------
-        tokens : Tensor, shape = (n_batch, current_sequence_length + 1)
-            the tokens, appended with the selected next token
-
-        completed : bool
-            True if all sequences has reached the end of text
-
-        """
         raise NotImplementedError
 
     def finalize(
         self, tokens: Tensor, sum_logprobs: Tensor
     ) -> Tuple[Sequence[Sequence[Tensor]], List[List[float]]]:
-        """Finalize search and return the final candidate sequences
-
-        Parameters
-        ----------
-        tokens : Tensor, shape = (n_audio, n_group, current_sequence_length)
-            all tokens in the context so far, including the prefix and sot_sequence
-
-        sum_logprobs : Tensor, shape = (n_audio, n_group)
-            cumulative log probabilities for each sequence
-
-        Returns
-        -------
-        tokens : Sequence[Sequence[Tensor]], length = n_audio
-            sequence of Tensors containing candidate token sequences, for each audio input
-
-        sum_logprobs : List[List[float]], length = n_audio
-            sequence of cumulative log probabilities corresponding to the above
-
-        """
         raise NotImplementedError
 
 class LogitFilter:
     def apply(self, logits: Tensor, tokens: Tensor) -> None:
-        """Apply any filtering or masking to logits in-place
-
-        Parameters
-        ----------
-        logits : Tensor, shape = (n_batch, vocab_size)
-            per-token logits of the probability distribution at the current step
-
-        tokens : Tensor, shape = (n_batch, current_sequence_length)
-            all tokens in the context so far, including the prefix and sot_sequence tokens
-
-        """
         raise NotImplementedError
 
 @dataclass
 class Tokenizer:
-    """A thin wrapper around `tiktoken` providing quick access to special tokens"""
-
     encoding: tiktoken.Encoding
     num_languages: int
     language: Optional[str] = None
@@ -289,10 +227,6 @@ class Tokenizer:
         return self.encoding.decode(token_ids, **kwargs)
 
     def decode_with_timestamps(self, token_ids: List[int], **kwargs) -> str:
-        """
-        Timestamp tokens are above other special tokens' id range and are ignored by `decode()`.
-        This method decodes given tokens with timestamps tokens annotated, e.g. "<|1.08|>".
-        """
         return self.encoding.decode(token_ids, **kwargs)
 
     @cached_property
@@ -363,16 +297,6 @@ class Tokenizer:
 
     @cached_property
     def non_speech_tokens(self) -> Tuple[int]:
-        """
-        Returns the list of tokens to suppress in order to avoid any speaker tags or non-speech
-        annotations, to prevent sampling texts that are not actually spoken in the audio, e.g.
-
-        - ♪♪♪
-        - ( SPEAKING FOREIGN LANGUAGE )
-        - [DAVID] Hey there,
-
-        keeping basic punctuations like commas, periods, question marks, exclamation points, etc.
-        """
         symbols = list('"#()*+/:;<=>@[\\]^_`{|}~「」『』')
         symbols += (
             "<< >> <<< >>> -- --- -( -[ (' (\" (( )) ((( ))) [[ ]] {{ }} ♪♪ ♪♪♪".split()
@@ -964,9 +888,6 @@ def index_select(input_tensor, dim, index):
     return ret
 
 def pad_or_trim(array, length: int = N_SAMPLES, *, axis: int = -1):
-    """
-    Pad or trim the audio array to N_SAMPLES, as expected by the encoder.
-    """
     if array.shape[axis] > length:
         y = tiny_Tensor.arange(length,dtype=dtypes.int32)
         y = y.numpy()
@@ -1053,16 +974,6 @@ def get_tokenizer(
 
 @lru_cache(maxsize=None)
 def mel_filters(device, n_mels: int) -> torch.Tensor:
-    """
-    load the mel filterbank matrix for projecting STFT into a Mel spectrogram.
-    Allows decoupling librosa dependency; saved using:
-
-        np.savez_compressed(
-            "mel_filters.npz",
-            mel_80=librosa.filters.mel(sr=16000, n_fft=400, n_mels=80),
-            mel_128=librosa.filters.mel(sr=16000, n_fft=400, n_mels=128),
-        )
-    """
     assert n_mels in {80, 128}, f"Unsupported n_mels: {n_mels}"
 
     filters_path = os.path.join(os.path.dirname(__file__), "whisper/assets", "mel_filters.npz")
@@ -1091,25 +1002,6 @@ def decode(
     options: DecodingOptions = DecodingOptions(),
     **kwargs,
 ) -> Union[DecodingResult, List[DecodingResult]]:
-    """
-    Performs decoding of 30-second audio segment(s), provided as Mel spectrogram(s).
-
-    Parameters
-    ----------
-    model: Whisper
-        the Whisper model instance
-
-    mel: torch.Tensor, shape = (80, 3000) or (*, 80, 3000)
-        A tensor containing the Mel spectrogram(s)
-
-    options: DecodingOptions
-        A dataclass that contains all necessary options for decoding 30-second segments
-
-    Returns
-    -------
-    result: Union[DecodingResult, List[DecodingResult]]
-        The result(s) of decoding contained in `DecodingResult` dataclass instance(s)
-    """
     if single := mel.ndim == 2:
         mel = mel.unsqueeze(0)
 
@@ -1139,76 +1031,6 @@ def transcribe(
     hallucination_silence_threshold: Optional[float] = None,
     **decode_options,
 ):
-    """
-    Transcribe an audio file using Whisper
-
-    Parameters
-    ----------
-    model: Whisper
-        The Whisper model instance
-
-    audio: Union[str, np.ndarray, torch.Tensor]
-        The path to the audio file to open, or the audio waveform
-
-    verbose: bool
-        Whether to display the text being decoded to the console. If True, displays all the details,
-        If False, displays minimal details. If None, does not display anything
-
-    temperature: Union[float, Tuple[float, ...]]
-        Temperature for sampling. It can be a tuple of temperatures, which will be successively used
-        upon failures according to either `compression_ratio_threshold` or `logprob_threshold`.
-
-    compression_ratio_threshold: float
-        If the gzip compression ratio is above this value, treat as failed
-
-    logprob_threshold: float
-        If the average log probability over sampled tokens is below this value, treat as failed
-
-    no_speech_threshold: float
-        If the no_speech probability is higher than this value AND the average log probability
-        over sampled tokens is below `logprob_threshold`, consider the segment as silent
-
-    condition_on_previous_text: bool
-        if True, the previous output of the model is provided as a prompt for the next window;
-        disabling may make the text inconsistent across windows, but the model becomes less prone to
-        getting stuck in a failure loop, such as repetition looping or timestamps going out of sync.
-
-    word_timestamps: bool
-        Extract word-level timestamps using the cross-attention pattern and dynamic time warping,
-        and include the timestamps for each word in each segment.
-
-    prepend_punctuations: str
-        If word_timestamps is True, merge these punctuation symbols with the next word
-
-    append_punctuations: str
-        If word_timestamps is True, merge these punctuation symbols with the previous word
-
-    initial_prompt: Optional[str]
-        Optional text to provide as a prompt for the first window. This can be used to provide, or
-        "prompt-engineer" a context for transcription, e.g. custom vocabularies or proper nouns
-        to make it more likely to predict those word correctly.
-
-    carry_initial_prompt: bool
-        If carry_initial_prompt is True, `initial_prompt` is prepended to the prompt of each internal
-        `decode()` call. If there is not enough context space at the start of the prompt, it is
-        left-sliced to make space.
-
-    decode_options: dict
-        Keyword arguments to construct `DecodingOptions` instances
-
-    clip_timestamps: Union[str, List[float]]
-        Comma-separated list start,end,start,end,... timestamps (in seconds) of clips to process.
-        The last end timestamp defaults to the end of the file.
-
-    hallucination_silence_threshold: Optional[float]
-        When word_timestamps is True, skip silent periods longer than this threshold (in seconds)
-        when a possible hallucination is detected
-
-    Returns
-    -------
-    A dictionary containing the resulting text ("text") and segment-level details ("segments"), and
-    the spoken language ("language"), which is detected when `decode_options["language"]` is None.
-    """
     dtype = torch.float16 if decode_options.get("fp16", True) else torch.float32
     if model.device == torch.device("cpu"):
         if torch.cuda.is_available():
@@ -1612,18 +1434,6 @@ def transcribe(
 def detect_language(
     model: "Whisper", mel: Tensor, tokenizer: Tokenizer = None
 ) -> Tuple[Tensor, List[dict]]:
-    """
-    Detect the spoken language in the audio, and return them as list of strings, along with the ids
-    of the most probable language tokens and the probability distribution over all language tokens.
-    This is performed outside the main decode loop in order to not interfere with kv-caching.
-
-    Returns
-    -------
-    language_tokens : Tensor, shape = (n_audio,)
-        ids of the most probable language tokens, which appears after the startoftranscript token.
-    language_probs : List[Dict[str, float]], length = n_audio
-        list of dictionaries containing the probability distribution over all languages.
-    """
     if tokenizer is None:
         tokenizer = get_tokenizer(
             model.is_multilingual, num_languages=model.num_languages
@@ -1859,10 +1669,6 @@ class AudioEncoder(nn.Module):
         self.ln_post = LayerNorm(n_state)
 
     def forward(self, x: Tensor):
-        """
-        x : torch.Tensor, shape = (batch_size, n_mels, n_ctx)
-            the mel spectrogram of the audio
-        """
         x = F.gelu(self.conv1(x))
         x = F.gelu(self.conv2(x))
         x = x.permute(0, 2, 1)
@@ -1914,12 +1720,6 @@ class TextDecoder(nn.Module):
         self.register_buffer("mask", mask, persistent=False)
 
     def forward(self, x: Tensor, xa: Tensor, kv_cache: Optional[dict] = None):
-        """
-        x : torch.LongTensor, shape = (batch_size, <= n_ctx)
-            the text tokens
-        xa : torch.Tensor, shape = (batch_size, n_audio_ctx, n_audio_state)
-            the encoded audio features to be attended on
-        """
         offset = next(iter(kv_cache.values())).shape[1] if kv_cache else 0
         y = self.token_embedding(x)
         y = Tensor(y.numpy())
@@ -1997,19 +1797,6 @@ class Whisper(nn.Module):
         return self.dims.n_vocab - 51765 - int(self.is_multilingual)
 
     def install_kv_cache_hooks(self, cache: Optional[dict] = None):
-        """
-        The `MultiHeadAttention` module optionally accepts `kv_cache` which stores the key and value
-        tensors calculated for the previous positions. This method returns a dictionary that stores
-        all caches, and the necessary hooks for the key and value projection modules that save the
-        intermediate tensors to be reused during later calculations.
-
-        Returns
-        -------
-        cache : Dict[nn.Module, torch.Tensor]
-            A dictionary object mapping the key/value projection modules to its cache
-        hooks : List[RemovableHandle]
-            List of PyTorch RemovableHandle objects to stop the hooks to be called
-        """
         cache = {**cache} if cache is not None else {}
         hooks = []
 
@@ -2126,27 +1913,6 @@ def load_model(
     in_memory: bool = False,
 ) -> Whisper:
     torch.manual_seed(42)
-    """
-    Load a Whisper ASR model
-
-    Parameters
-    ----------
-    name : str
-        one of the official model names listed by `whisper.available_models()`, or
-        path to a model checkpoint containing the model dimensions and the model state_dict.
-    device : Union[str, torch.device]
-        the PyTorch device to put the model into
-    download_root: str
-        path to download the model files; by default, it uses "~/.cache/whisper"
-    in_memory: bool
-        whether to preload the model weights into host memory
-
-    Returns
-    -------
-    model : Whisper
-        The Whisper ASR model instance
-    """
-
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
     if download_root is None:
@@ -2180,25 +1946,6 @@ def load_model(
     return model.to(device)
 
 def load_audio(file: str, sr: int = SAMPLE_RATE):
-    """
-    Open an audio file and read as mono waveform, resampling as necessary
-
-    Parameters
-    ----------
-    file: str
-        The audio file to open
-
-    sr: int
-        The sample rate to resample the audio if necessary
-
-    Returns
-    -------
-    A NumPy array containing the audio waveform, in float32 dtype.
-    """
-
-    # This launches a subprocess to decode audio while down-mixing
-    # and resampling as necessary.  Requires the ffmpeg CLI in PATH.
-    # fmt: off
     cmd = [
         "ffmpeg",
         "-nostdin",
@@ -2224,47 +1971,32 @@ def log_mel_spectrogram(
     padding: int = 0,
     device: Optional[Union[str, torch.device]] = None,
 ):
-    """
-    Compute the log-Mel spectrogram of
-
-    Parameters
-    ----------
-    audio: Union[str, np.ndarray, torch.Tensor], shape = (*)
-        The path to audio or either a NumPy array or Tensor containing the audio waveform in 16 kHz
-
-    n_mels: int
-        The number of Mel-frequency filters, only 80 and 128 are supported
-
-    padding: int
-        Number of zero samples to pad to the right
-
-    device: Optional[Union[str, torch.device]]
-        If given, the audio tensor is moved to this device before STFT
-
-    Returns
-    -------
-    torch.Tensor, shape = (n_mels, n_frames)
-        A Tensor that contains the Mel spectrogram
-    """
     if not torch.is_tensor(audio):
         if isinstance(audio, str):
             audio = load_audio(audio)
         audio = torch.from_numpy(audio)
-
-    if device is not None:
-        audio = audio.to(device)
     if padding > 0:
-        audio = F.pad(audio, (0, padding))
-    window = torch.hann_window(N_FFT).to(audio.device)
-    stft = torch.stft(audio, N_FFT, HOP_LENGTH, window=window, return_complex=True)
+        audio = tiny_Tensor(audio.numpy())
+        audio = audio.pad((0,padding),value=0)
+        audio = Tensor(audio.numpy())
+    window = tiny_Tensor.arange(N_FFT)
+    window = 2 * math.pi * window / N_FFT
+    window = 0.5 - (0.5 * tiny_Tensor.cos(window))
+
+    #todo later, librosa's gets a slightly different output
+    window = Tensor(window.numpy())
+    stft = torch.stft(audio, N_FFT, HOP_LENGTH, window=window, return_complex=True) 
     magnitudes = stft[..., :-1].abs() ** 2
-
     filters = mel_filters(audio.device, n_mels)
+    
+    filters = tiny_Tensor(filters.numpy())
+    magnitudes = tiny_Tensor(magnitudes.numpy())
     mel_spec = filters @ magnitudes
-
-    log_spec = torch.clamp(mel_spec, min=1e-10).log10()
-    log_spec = torch.maximum(log_spec, log_spec.max() - 8.0)
+    mel_spec = mel_spec.clamp(min_=1e-10)
+    log_spec = tiny_Tensor.log2(mel_spec) / tiny_Tensor.log2(tiny_Tensor(10))
+    log_spec = tiny_Tensor.maximum(log_spec,log_spec.max() - 8.0)
     log_spec = (log_spec + 4.0) / 4.0
+    log_spec = Tensor(log_spec.numpy())
     return log_spec
 
 st = time.perf_counter()
