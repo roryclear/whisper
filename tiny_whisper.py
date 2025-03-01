@@ -1586,7 +1586,6 @@ class ResidualAttentionBlock(nn.Module):
         kv_cache: Optional[dict] = None,
     ):
         if type(x) == Tensor: 
-            print("ffs")
             x = tiny_Tensor(x.numpy())
         y = self.attn_ln(x,tiny_out=True)
 
@@ -1622,6 +1621,25 @@ def sinusoids(length, channels, max_timescale=10000):
     ret = tiny_Tensor.cat(s,c,dim=1)
     return Tensor(ret.numpy())
 
+def erf(x: torch.Tensor) -> torch.Tensor:
+    a1 =  0.254829592
+    a2 = -0.284496736
+    a3 =  1.421413741
+    a4 = -1.453152027
+    a5 =  1.061405429
+    p  =  0.3275911
+    x = x.numpy()
+    sign = np.sign(x)
+    x = np.abs(x)
+    t = 1.0 / (1.0 + p * x)
+    y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * np.exp(-x * x)
+    y = Tensor(y)
+    sign = Tensor(sign)
+    return sign * y
+
+def gelu(x: torch.Tensor) -> torch.Tensor:
+    return x * 0.5 * (1.0 + erf(x / math.sqrt(2.0)))
+
 class AudioEncoder(nn.Module):
     def __init__(
         self, n_mels: int, n_ctx: int, n_state: int, n_head: int, n_layer: int
@@ -1637,20 +1655,21 @@ class AudioEncoder(nn.Module):
         self.ln_post = LayerNorm(n_state)
 
     def forward(self, x: Tensor):
-        x = F.gelu(self.conv1(x))
-        x = F.gelu(self.conv2(x))
+        x = self.conv1(x)
+        x = gelu(x)
+        x = self.conv2(x)
+        x = gelu(x)
         x = x.permute(0, 2, 1)
 
         assert x.shape[1:] == self.positional_embedding.shape, "incorrect audio shape"
         x = (x + self.positional_embedding).to(x.dtype)
-        
-        if type(x) == Tensor: x = tiny_Tensor(x.numpy())
+
         for block in self.blocks:
             x = block(x)
 
-        x = self.ln_post(x,tiny_out=True)
-        x = Tensor(x.numpy())
-        return x
+        x = self.ln_post(x)
+        return Tensor(x.numpy())
+
 
 
 class Embedding(nn.Module):
