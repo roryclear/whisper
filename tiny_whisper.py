@@ -133,24 +133,8 @@ def compression_ratio(text) -> float:
     text_bytes = text.encode("utf-8")
     return len(text_bytes) / len(zlib.compress(text_bytes))
 
-class SequenceRanker:
-    def rank(
-        self, tokens: List[List[Tensor]], sum_logprobs: List[List[float]]
-    ) -> List[int]:
-        raise NotImplementedError
-
-class Inference:
-    def logits(self, tokens: Tensor, audio_features: Tensor) -> Tensor:
-        """Perform a forward pass on the decoder and return per-token logits"""
-        raise NotImplementedError
-
-    def rearrange_kv_cache(self, source_indices) -> None:
-        """Update the key-value cache according to the updated beams"""
-        raise NotImplementedError
-
-    def cleanup_caching(self) -> None:
-        """Clean up any resources or hooks after decoding is finished"""
-        pass
+class SequenceRanker: pass
+class Inference: pass
 
 class MaximumLikelihoodRanker(SequenceRanker):
     def __init__(self, length_penalty: Optional[float]):
@@ -173,23 +157,8 @@ class MaximumLikelihoodRanker(SequenceRanker):
         return [np.argmax(scores(p, l)) for p, l in zip(sum_logprobs, lengths)]
 
 
-class TokenDecoder:
-    def reset(self):
-        """Initialize any stateful variables for decoding a new sequence"""
-
-    def update(
-        self, tokens: Tensor, logits: Tensor, sum_logprobs: Tensor
-    ) -> Tuple[Tensor, bool]:
-        raise NotImplementedError
-
-    def finalize(
-        self, tokens: Tensor, sum_logprobs: Tensor
-    ) -> Tuple[Sequence[Sequence[Tensor]], List[List[float]]]:
-        raise NotImplementedError
-
-class LogitFilter:
-    def apply(self, logits: Tensor, tokens: Tensor) -> None:
-        raise NotImplementedError
+class TokenDecoder: pass
+class LogitFilter: pass
 
 @dataclass
 class Tokenizer:
@@ -784,7 +753,6 @@ class DecodingTask:
 
     @torch.no_grad()
     def run(self, mel: Tensor) -> List[DecodingResult]:
-        self.decoder.reset()
         tokenizer: Tokenizer = self.tokenizer
         n_audio: int = mel.shape[0]
 
